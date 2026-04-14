@@ -1,0 +1,11 @@
+
+target/
+
+*.class
+
+*.jar
+
+.mvn/
+
+application-local.properties
+
