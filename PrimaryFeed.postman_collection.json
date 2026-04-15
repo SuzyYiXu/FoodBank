@@ -2323,7 +2323,44 @@
         "response": []
       },
       {
-        "name": "9. Distribute 61 bags — Expect 400 Insufficient Stock",
+        "name": "9. Create Second Distribution Header (for overflow test)",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "exec": [
+                "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                "const d = pm.response.json();",
+                "pm.test('distributionId assigned', () => pm.expect(d.distributionId).to.be.a('number'));",
+                "pm.environment.set('inv_test_dist2_id', d.distributionId);",
+                "console.log('dist2 id =', d.distributionId);"
+              ],
+              "type": "text/javascript"
+            }
+          }
+        ],
+        "request": {
+          "method": "POST",
+          "header": [
+            { "key": "Authorization", "value": "Bearer {{staff_token}}", "type": "text" },
+            { "key": "Content-Type", "value": "application/json", "type": "text" }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"branch\":       { \"branchId\":       2 },\n  \"beneficiary\":  { \"beneficiaryId\":  3 },\n  \"user\":         { \"userId\":         1 },\n  \"distributionDate\": \"2026-04-14T13:00:00\"\n}",
+            "options": { "raw": { "language": "json" } }
+          },
+          "url": {
+            "raw": "{{base_url}}/api/distributions",
+            "host": ["{{base_url}}"],
+            "path": ["api", "distributions"]
+          },
+          "description": "WHY a new header is needed:\n\ndistribution_items has UNIQUE KEY uq_distribution_inventory (distribution_id, inventory_id).\nWithin one distribution event (header), each inventory batch can appear exactly once — re-inserting the same (distribution_id, inventory_id) pair would be a duplicate entry, not an overflow error.\n\nEach distribution header = one real-world transaction (one beneficiary visit). To take more from the same batch you create a new transaction. This is correct by design.\n\nThis header uses beneficiary_id=3 (Sofia Reyes) to represent a second distribution event."
+        },
+        "response": []
+      },
+      {
+        "name": "10. Distribute 61 bags — Expect 400 Insufficient Stock",
         "event": [
           {
             "listen": "test",
@@ -2348,7 +2385,7 @@
           ],
           "body": {
             "mode": "raw",
-            "raw": "{\n  \"distribution\": { \"distributionId\": {{inv_test_dist_id}} },\n  \"inventory\":    { \"inventoryId\":    {{inv_test_inv_id}} },\n  \"quantity\":     61\n}",
+            "raw": "{\n  \"distribution\": { \"distributionId\": {{inv_test_dist2_id}} },\n  \"inventory\":    { \"inventoryId\":    {{inv_test_inv_id}} },\n  \"quantity\":     61\n}",
             "options": { "raw": { "language": "json" } }
           },
           "url": {
@@ -2356,12 +2393,12 @@
             "host": ["{{base_url}}"],
             "path": ["api", "distribution-items"]
           },
-          "description": "Attempts to distribute 61 bags when only 60 remain.\n\nTrigger logic:\n  1. Check: inventories.quantity (60) >= requested (61)? NO\n  2. SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Insufficient stock: quantity would go below 0.'\n\nSpring catches DataIntegrityViolationException → GlobalExceptionHandler returns 400 with the trigger message."
+          "description": "New distribution header, same inventory batch. Only 60 bags remain (100 donated − 40 distributed).\n\nTrigger logic:\n  1. Check: inventories.quantity (60) >= requested (61)? NO\n  2. SIGNAL SQLSTATE '45000' 'Insufficient stock: quantity would go below 0.'\n\nSpring → DataIntegrityViolationException → GlobalExceptionHandler → 400."
         },
         "response": []
       },
       {
-        "name": "10. Confirm Inventory Unchanged After Failed Distribution (still 60)",
+        "name": "11. Confirm Inventory Unchanged After Failed Distribution (still 60)",
         "event": [
           {
             "listen": "test",
@@ -2369,7 +2406,7 @@
               "exec": [
                 "pm.test('Status 200', () => pm.response.to.have.status(200));",
                 "const inv = pm.response.json();",
-                "pm.test('Quantity still 60 — trigger rollback worked', () => pm.expect(inv.quantity).to.eql(60));"
+                "pm.test('Quantity still 60 — trigger abort prevented decrement', () => pm.expect(inv.quantity).to.eql(60));"
               ],
               "type": "text/javascript"
             }
@@ -2385,7 +2422,7 @@
             "host": ["{{base_url}}"],
             "path": ["api", "inventory", "{{inv_test_inv_id}}"]
           },
-          "description": "Confirms the failed distribution (step 9) did not corrupt inventory. Quantity must still be 60."
+          "description": "Confirms the insufficient-stock trigger abort left inventory intact. Quantity must still be 60."
         },
         "response": []
       }
